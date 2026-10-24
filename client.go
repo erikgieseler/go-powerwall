@@ -50,6 +50,8 @@ type Client struct {
 	auth_ch              chan *authMessage
 	retryInterval        time.Duration
 	retryTimeout         time.Duration
+	scheme               string
+	skipLogin            bool
 }
 
 // NewClient creates a new Client object.  gatewayAddress should be the IP
@@ -75,6 +77,7 @@ func NewClient(gatewayAddress, gatewayLoginEmail, gatewayLoginPassword string, o
 		httpClient:           httpClient,
 		token_ch:             make(chan string),
 		auth_ch:              make(chan *authMessage),
+		scheme:               "https",
 	}
 
 	for _, option := range options {
@@ -83,7 +86,9 @@ func NewClient(gatewayAddress, gatewayLoginEmail, gatewayLoginPassword string, o
 		}
 	}
 
-	go c.authManager()
+	if !c.skipLogin {
+		go c.authManager()
+	}
 
 	c.logf("New powerwall client created: gateway_address=%s email=%s", gatewayAddress, gatewayLoginEmail)
 	return c
@@ -93,6 +98,21 @@ func NewClient(gatewayAddress, gatewayLoginEmail, gatewayLoginPassword string, o
 func WithHttpClient(httpClient *http.Client) func(c *Client) {
 	return func(c *Client) {
 		c.httpClient = httpClient
+	}
+}
+
+// WithScheme sets the URL scheme for API requests (default "https").
+func WithScheme(scheme string) func(c *Client) {
+	return func(c *Client) {
+		c.scheme = scheme
+	}
+}
+
+// WithSkipLogin skips the gateway login flow, e.g. for local proxies such as
+// pypowerwall-server that expose the gateway API without authentication.
+func WithSkipLogin() func(c *Client) {
+	return func(c *Client) {
+		c.skipLogin = true
 	}
 }
 
@@ -200,8 +220,15 @@ func (c *Client) doHttpRequest(api string, method string, payload []byte, conten
 	var resp *http.Response
 	var err error
 
+	scheme := strings.ToLower(c.scheme)
+	switch scheme {
+	case "http", "https":
+	default:
+		return nil, fmt.Errorf("unsupported scheme %q", c.scheme)
+	}
+
 	url := url.URL{
-		Scheme: "https",
+		Scheme: scheme,
 		Host:   c.gatewayAddress,
 		Path:   "api/" + api,
 	}
@@ -221,9 +248,9 @@ func (c *Client) doHttpRequest(api string, method string, payload []byte, conten
 		req.Header.Set("Content-Type", contentType)
 	}
 
-	if strings.HasPrefix(api, "login/") {
-		// If we're doing a login API call, don't set the auth cookie,
-		// or attempt to retry on auth issues.
+	if strings.HasPrefix(api, "login/") || c.skipLogin {
+		// Login calls and no-auth clients don't set the auth cookie or retry
+		// on auth issues.
 		resp, err = c.httpDo(req)
 		if err != nil {
 			return nil, err

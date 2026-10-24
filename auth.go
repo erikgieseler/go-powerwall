@@ -31,6 +31,10 @@ type authMessage struct {
 // anyway if a call is made which requires authentication and it is not already
 // successfully logged in.
 func (c *Client) DoLogin() error {
+	if c.skipLogin {
+		return nil
+	}
+
 	action := authMessage{
 		action:    cmd_DO_LOGIN,
 		email:     c.gatewayLoginEmail,
@@ -42,6 +46,10 @@ func (c *Client) DoLogin() error {
 }
 
 func (c *Client) checkLogin() error {
+	if c.skipLogin {
+		return nil
+	}
+
 	action := authMessage{
 		action:    cmd_CHECK_LOGIN,
 		email:     c.gatewayLoginEmail,
@@ -56,12 +64,19 @@ func (c *Client) checkLogin() error {
 // then passed to SetAuthToken on later connections to re-use the same token
 // across Clients.
 func (c *Client) GetAuthToken() string {
+	if c.skipLogin {
+		return ""
+	}
 	return <-c.token_ch
 }
 
 // SetAuthToken sets the provided string as the new auth token to use for
 // subsequent API calls.
 func (c *Client) SetAuthToken(token string) {
+	if c.skipLogin {
+		return
+	}
+
 	c.auth_ch <- &authMessage{action: cmd_SET_TOKEN, token: token}
 	// Wait until we are sure the manager is returning the updated token before returning.
 	for {
